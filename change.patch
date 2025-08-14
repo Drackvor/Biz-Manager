@@ -1,0 +1,452 @@
+diff --git a/V1.6.0 b/V1.6.0
+index dd059948c3b79a3af31d68675b88a8d96ab955aa..64b33dcac119ea495ba9b8f7cfc708dab24d9b91 100644
+--- a/V1.6.0
++++ b/V1.6.0
+@@ -1,190 +1,260 @@
+ // BizTracker.js v1.6.0 — Roll20 API (ES5-safe)
+ // • Keeps v1.5.0 structure & UI, adds: Seasons, Restaurant & Café menus/recipes,
+ //   Central Market (brands, age, quality, specials), Suppliers, Lots+Spoilage/Aging,
+ //   Dynamic pricing, Staff skill throughput, Courier trust & insurance,
+ //   Franchise bulk discounts, Strategy UI, Weekly report, Export.
+ // • ES5-safe (no let/const/arrow), compact panels & buttons maintained.
+ 
++/* ======================
++   UNIVERSAL LOGGER
++   ====================== */
++
++// master switches
++var BIZ_LOG_ENABLED = true;     // turn all logging on/off
++var BIZ_LOG_TO_CHAT = false;    // optionally whisper a short note to GM for each log
++
++var BIZ_LOG_PREFIX  = '\uD83D\uDCBC [BizTracker]';
++
++function bizLog(message, data, whisperTo){
++  if (!BIZ_LOG_ENABLED) return;
++
++  var stamp = new Date().toISOString();
++  var header = BIZ_LOG_PREFIX + ' ' + stamp + ' — ' + message;
++
++  try {
++    if (typeof data === 'undefined') {
++      console.log(header);
++    } else {
++      console.log(header, data);
++    }
++  } catch (err) {
++    // Roll20 console is robust, but keep this safe
++    try { console.log(header + ' [data unavailable]', err); } catch(_) {}
++  }
++
++  if (BIZ_LOG_TO_CHAT) {
++    var who = whisperTo || 'gm';
++    try {
++      sendChat('BizTracker', '/w '+who+' ' + panel('Log', [_.escape(message) + (data ? ' <em>(details in console)</em>' : '')]));
++    } catch(_) {}
++  }
++}
++
++// quick helpers (optional)
++function bizWarn(message, data, who){ bizLog('\u26A0\uFE0F ' + message, data, who); }
++function bizErr(message, data, who){  bizLog('\u274C ' + message, data, who); }
++
+ on('ready', function() {
++  bizLog('System ready, initializing state if needed');
+   if (!state.BIZ) initializeState();
+   state.BIZ.calendarEvents = state.BIZ.calendarEvents || [];
+   state.BIZ.history        = state.BIZ.history || [];
+   state.BIZ.market         = state.BIZ.market || buildInitialMarket();
+   state.BIZ.market 		   = ensureMarketShape(state.BIZ.market);
+   state.BIZ.version        = state.BIZ.version || '1.6.0';
+-  log('💼 [BizTracker] Ready v'+state.BIZ.version);
++  bizLog('Ready', { version: state.BIZ.version });
+ });
+ 
+ /* =================
+    STATE & UTIL
+    ================= */
+ function initializeState() {
++  bizLog('Initializing state');
+   state.BIZ = {
+     date:           { year:1358, month:'Hammer', day:1, festival:null, weekday:1 },
+     businesses:     {},
+     franchises:     {},
+     calendarEvents: [],
+     history:        [],
+     market:         buildInitialMarket(), // central market
+     version:        '1.6.0'
+   };
++  bizLog('State initialized', state.BIZ);
+ }
+ function whisper(who, tmpl) {
+   // Avoid dumping full HTML into the API log.
+   // Flip state.BIZ._debug=true if you want minimal, plain-text logging.
+   try {
+     if (state.BIZ && state.BIZ._debug) {
+       var txt = String(tmpl).replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').slice(0,300);
+-      log('➡️ '+who+': '+txt+(txt.length===300?'…':''));
++      bizLog('Whisper debug preview', { to: who, text: txt+(txt.length===300?'…':'') });
+     }
+   } catch(e) {}
+-
++  bizLog('Whispering', { to: who });
+   sendChat('BizTracker', '/w "'+who+'" ' + tmpl);
+ }
+ 
+ function stripQuotes(s){ return (s||'').replace(/^['"]?(.*?)['"]?$/, '$1'); }
+-function encodeArg(s){ return encodeURIComponent(String((s===undefined||s===null)?'':s)); }
++function encodeArg(s){
++  bizLog('Encoding arg', { input: s });
++  return encodeURIComponent(String((s===undefined||s===null)?'':s));
++}
+ function decodeArg(s){
++  bizLog('Decoding arg', { input: s });
+   try { return decodeURIComponent(stripQuotes(s||'')); }
+-  catch(e){ return stripQuotes(s||''); }
++  catch(e){ bizWarn('Failed to decode arg', { input: s, error: e }); return stripQuotes(s||''); }
+ }
+ function currencyToCP(c){
++  bizLog('Converting currency to CP', c);
+   return (c.pd||0)*100000 + (c.pp||0)*10000 + (c.gp||0)*1000 + (c.ep||0)*500 + (c.sp||0)*10 + (c.cp||0);
+ }
+ function cpToCurrency(total){
++  bizLog('Converting CP to currency', { total: total });
+   var cp = total|0;
+   var pd = Math.floor(cp/100000); cp%=100000;
+   var pp = Math.floor(cp/10000);  cp%=10000;
+   var gp = Math.floor(cp/1000);   cp%=1000;
+   var ep = Math.floor(cp/500);    cp%=500;
+   var sp = Math.floor(cp/10);     cp%=10;
+-  return { pd:pd, pp:pp, gp:gp, ep:ep, sp:sp, cp:cp };
++  var out = { pd:pd, pp:pp, gp:gp, ep:ep, sp:sp, cp:cp };
++  bizLog('Converted CP to currency', out);
++  return out;
+ }
+ function currStr(c){ return c.pd+'pd '+c.pp+'pp '+c.gp+'gp '+c.ep+'ep '+c.sp+'sp '+c.cp+'cp'; }
+ function gpStr(cp){ return (cp/1000).toFixed(2)+'gp'; }
+ function clamp(n,a,b){ return Math.max(a, Math.min(b, n)); }
+ function rnd(min,max){ return Math.random()*(max-min)+min; }
+ 
+ /* ================ */
+ function badge(tone){
+   if (tone==='pri') return '🟩';
+   if (tone==='sec') return '🟦';
+   if (tone==='warn') return '🟨';
+   if (tone==='danger') return '🟥';
+   if (tone==='info') return '🟪';
+   if (tone==='muted') return '⬜️';
+   return '▪️';
+ }
+ function btn(label, command, tone){
+   // escape only the label; the command must remain raw for Roll20's button link
+   return badge(tone)+' ['+_.escape(label)+']('+command+')';
+ }
+ 
+ function panel(title, lines){
++  bizLog('Building panel', { title: title, lines: lines });
+   var list = (lines||[]).filter(function(x){ return x!==undefined && x!==null && x!==''; });
+   var html = [];
+   html.push('<div style="border:1px solid #444;background:#111;padding:8px;border-radius:6px;">');
+   html.push('<div style="background:#2b6;color:#fff;padding:4px 8px;border-radius:4px;font-weight:bold;">'+_.escape(title)+'</div>');
+   html.push('<div style="margin-top:6px;color:#ddd;line-height:1.45;">'+list.join('<br>')+'</div>');
+   html.push('</div>');
+-  return html.join('');
++  var out = html.join('');
++  bizLog('Built panel', { title: title });
++  return out;
+ }
+ 
+-function sayPanel(who, title, lines){ whisper(who, panel(title, lines)); }
++function sayPanel(who, title, lines){
++  bizLog('Sending panel', { to: who, title: title });
++  whisper(who, panel(title, lines));
++}
+ 
+ /* =========================
+    BUY FLOW (no SKUs)
+    - Presents items linked to market for a chosen business
+    - Lets user enter containers + extra base units
+    - Shows cost preview with Yes/No -> executes purchase
+    ========================= */
+ 
+ function _gp(n){ return (Number(n)||0); }
+ 
+ function gpFromCash(c){
++  bizLog('Calculating GP from cash', c);
+   if (!c) return 0;
+   // Conservative conversion (adjust if you use a different standard):
+   // 1 pp=10gp, 1 ep=0.5gp, 1 sp=0.1gp, 1 cp=0.01gp, ignore pd if unknown
+-  return _gp(c.gp)+_gp(c.pp)*10+_gp(c.ep)*0.5+_gp(c.sp)/10+_gp(c.cp)/100+_gp(c.pd||0)*10;
++  var gp = _gp(c.gp)+_gp(c.pp)*10+_gp(c.ep)*0.5+_gp(c.sp)/10+_gp(c.cp)/100+_gp(c.pd||0)*10;
++  bizLog('Calculated GP from cash', { gp: gp });
++  return gp;
+ }
+ function spendFromCash(c, costGP){
++  bizLog('Spending from cash', { cash: c, costGP: costGP });
+   // Spend GP-first (simple). If you want proper coin-change, expand this.
+   costGP = _gp(costGP);
+   var have = gpFromCash(c);
+   c.gp = _gp(c.gp) - costGP; // could go negative = debt
+-  return have - costGP;
++  var remaining = have - costGP;
++  bizLog('Cash after spend', { remaining: remaining, updated: c });
++  return remaining;
+ }
+ 
+ function findCheapestMarketByTag(M, tag){
++  bizLog('Searching cheapest market item', { tag: tag });
+   var best = null, id, sku, cur;
+   for (id in M.skus){
+     sku = M.skus[id]; cur = M.current[id];
+     if (!cur || !cur.available) continue;
+     var tags = sku.tags || [sku.type];
+     if (tags && tags.indexOf(tag)!==-1){
+       var price = _gp(cur.priceGP);
++      bizLog('Candidate market item', { id: id, price: price });
+       if (!best || price < best.price){
+         best = {
+           skuId: id,
+           name: sku.name,
+           baseUnit: sku.baseUnit||'unit',
+           price: price,
+           offerPct: cur.offerPct||0
+         };
++        bizLog('New best market item', best);
+       }
+     }
+   }
++  bizLog('Cheapest market item result', best);
+   return best;
+ }
+ 
+ // Returns market-buyable items for a business (by its STOCK defs)
+ function getAvailableMarketItemsForBiz(biz){
++  bizLog('Getting available market items for biz', { biz: biz && biz.name, type: biz && biz.type });
+   var t = TYPE_INCOME[biz.type];
+-  if (!t) return [];
++  if (!t){ bizWarn('No income type for biz', { biz: biz }); return []; }
+   var M = state.BIZ.market;
+   var out = [];
+   (t.stock||[]).forEach(function(s){
+     if (!s.linkedToMarket || !s.marketTag) return;
+     var best = findCheapestMarketByTag(M, s.marketTag);
+     if (!best) return;
+-    out.push({
++    var item = {
+       stockKey: s.key,
+       label: s.label,
+       marketTag: s.marketTag,
+       baseUnit: s.baseUnit || (best.baseUnit||'unit'),
+       containerUnit: s.containerUnit || 'crate',
+       unitsPerContainer: _gp(s.unitsPerContainer)||10,
+       price: best.price, // per base unit
+       offerPct: best.offerPct||0
+-    });
++    };
++    bizLog('Available market item', item);
++    out.push(item);
+   });
+   // sort by tag then price
+   out.sort(function(a,b){
+     if (a.marketTag===b.marketTag) return a.price-b.price;
+     return (a.marketTag<b.marketTag?-1:1);
+   });
++  bizLog('Available market items result', out);
+   return out;
+ }
+ 
+ function startBuyFlow(who, rawBizName){
+   var name = stripQuotes(rawBizName);
+   var biz  = state.BIZ.businesses[name];
+   if (!biz) return whisper(who, panel('Error', ['❌ No such business: '+_.escape(name)]));
+   var avail = getAvailableMarketItemsForBiz(biz);
+   if (!avail.length){
+     return whisper(who, panel('Market', ['<em>No matching market items for '+_.escape(name)+'.</em>']));
+   }
+   var encBiz = encodeArg(name);
+   var lines = ['🛒 <b>Buy Stock — '+_.escape(name)+'</b>', '<em>Select an item, then you’ll enter quantities.</em>', '<hr>'];
+   avail.forEach(function(it){
+     var tag = it.marketTag, key = it.stockKey;
+     var p = it.price.toFixed(3)+'gp/'+_.escape(it.baseUnit)+(it.offerPct?(' (offer '+it.offerPct+'%)'):'');
+     lines.push('• <b>'+_.escape(it.label)+'</b> — '+p+
+       ' '+btn('Select', "!biz --buyconfirm "+encBiz+" '"+key+"' '?{Containers of "+_.escape(it.containerUnit)+"|0}' '?{Extra "+_.escape(it.baseUnit)+"|0}'", 'pri'));
+   });
+   lines.push('<hr>'+btn('Back', "!biz --bizmenu "+encBiz, 'muted'));
+   sayPanel(who, 'Market — Pick Item', lines);
+ }
+ 
+ function startBuyFlowFromTag(who, rawTag){
+   var tag = stripQuotes(rawTag);
+@@ -1981,55 +2051,79 @@ function showMarket(who){
+     lines.push('• <b>'+_.escape(tag)+'</b> — best '+best.priceGP.toFixed(3)+'gp/'+_.escape(best.unit)+' '+(best.offerPct?('(offer '+best.offerPct+'%)'):'')+
+       ' '+btn('Buy', "!biz --marketbuytag " +
+         '"?{Business|'+pickBiz+'}" '+
+         '"?{Stock Key in that business (must match a linked marketTag)|'+tag+'}" '+
+         '"'+tag+'" '+
+         '"?{How many containers (0 for none)|0}" '+
+         '"?{Extra base units (adds to containers)|0}"'
+         ,'pri'));
+   }
+   sayPanel(who,'Market', lines);
+ }
+ 
+ function showMarketSpecials(who){
+   var M=state.BIZ.market, id, cur, sku, lines=['🏷️ <b>Market Specials</b>'];
+   for (id in M.current){
+     cur=M.current[id]; sku=M.skus[id];
+     if (cur && cur.offerPct) lines.push('• '+id+': '+sku.name+' — '+cur.offerPct+'% this month');
+   }
+   if (lines.length===1) lines.push('<em>No current specials.</em>');
+   sayPanel(who,'Market Specials',lines);
+ }
+ 
+ /* =================
+    CHAT COMMANDS
+    ================= */
++
++// Automatically wrap key functions with entry/exit logging for deeper insight
++var BIZ_FUNCTIONS_TO_LOG = ['startBuyFlow','startBuyFlowFromTag','confirmBuyFlow','execBuyFlow','monthlyMarketUpdate','showMainMenu'];
++(function(){
++  var root = (function(){ return this; }).call(null);
++  BIZ_FUNCTIONS_TO_LOG.forEach(function(name){
++    var fn = root[name];
++    if (typeof fn === 'function'){
++      root[name] = function(){
++        bizLog('Enter '+name, { args: Array.prototype.slice.call(arguments) });
++        var result;
++        try {
++          result = fn.apply(this, arguments);
++          return result;
++        } finally {
++          bizLog('Exit '+name, { result: result });
++        }
++      };
++    }
++  });
++})();
++
+ on('chat:message', function(msg){
++  bizLog('Chat message received', { who: msg.who, content: msg.content, type: msg.type });
+   if (msg.type !== 'api' || msg.content.indexOf('!biz')!==0) return;
+   var who = msg.who.replace(/ \(GM\)$/, '');
+   var parts = msg.content.match(/(?:[^\s"]+|"[^"]*")+/g) || [];
+   var cmd   = parts[1];
++  bizLog('Processing command', { who: who, cmd: cmd, parts: parts });
+ 
+   switch(cmd){
+ 
+     case 'start':
+     case '--start':
+       return showMainMenu(who);
+ 	  
+ 	  case '--buyflow':
+   return startBuyFlow(who, parts[2]);
+ case '--buyflowtag':
+   return startBuyFlowFromTag(who, parts[2]);
+ case '--buyconfirm':
+   return confirmBuyFlow(who, parts[2], parts[3], parts[4], parts[5]);
+ case '--buyexec':
+   return execBuyFlow(who, parts[2], parts[3], parts[4], parts[5]);
+ 
+ 
+     case '--date': {
+       var d = state.BIZ.date;
+       return sayPanel(who, 'BizTracker — Date', ['📅 '+_.escape(dateStr(d))+' — Tenday '+d.weekday+'/10']);
+     }
+ 
+     case '--setdate': {
+       var mon = stripQuotes(parts[2]);
+       var day = parseInt(stripQuotes(parts[3])||'1',10);
+@@ -2208,71 +2302,72 @@ case '--buyexec':
+     }
+ 
+     case '--viewstaff': {
+       var bnv = decodeArg(parts[2]);
+       var bz3 = state.BIZ.businesses[bnv];
+       if (!bz3) return whisper(who, panel('Error', ['❌ No such business: '+_.escape(bnv)]));
+       var lines2 = ['👥 <b>Staff for '+_.escape(bnv)+'</b>'];
+       if (!bz3.staff || !bz3.staff.length) lines2.push('<em>No staff.</em>');
+       else for (var i=0;i<bz3.staff.length;i++){
+         var s = bz3.staff[i];
+         lines2.push('• '+_.escape(s.name)+' — '+_.escape(s.role)+' — '+s.wageGp.toFixed(2)+'gp/week — skill '+(s.skill||1).toFixed(2));
+       }
+       lines2.push('<hr>'+btn('Back', "!biz --bizmenu "+encodeArg(bnv), 'muted'));
+       sayPanel(who, 'BizTracker — Staff', lines2);
+       return;
+     }
+ 
+     /* STOCK VIEW/BUY/ADD */
+     case '--viewstock': {
+       var bnx = decodeArg(parts[2]);
+       var bz4 = state.BIZ.businesses[bnx];
+       if (!bz4) return whisper(who, panel('Error', ['❌ No such business: '+_.escape(bnx)]));
+       var lines3 = ['📦 <b>Stock for '+_.escape(bnx)+'</b>'];
+       var keys = Object.keys(bz4.stock||{});
+       if (!keys.length) lines3.push('<em>No tracked stock for this business.</em>');
+-      else for (var i=0;i<keys.length;i++){
+-        var have = [];
+-		for (var i=0;i<keys.length;i++){
+-		var k = keys[i], s = bz4.stock[k];
+-		if ((s.qtyUnits||0) > 0) have.push([k,s]);
+-	}
+-	if (!have.length) lines3.push('<em>No stock on hand.</em>');
+-	for (var h=0; h<have.length; h++){
+-		var s = have[h][1];
+-		var containers = s.unitsPerContainer>0 ? Math.floor((s.qtyUnits||0)/s.unitsPerContainer) : 0;
+-		var rem = s.unitsPerContainer>0 ? ((s.qtyUnits||0)%s.unitsPerContainer) : (s.qtyUnits||0);
+-		lines3.push(
+-			'• <b>'+_.escape(s.label)+'</b>: '+(s.qtyUnits||0)+' '+_.escape(s.baseUnit)+' ('+containers+' '+_.escape(s.containerUnit)+' + '+rem+')'
+-			+ ' — sell@'+(s.salePricePerUnit||0).toFixed(2)+'gp'
+-		);
+-	}
+-
+-      lines3.push('<hr>'+btn('Back', "!biz --bizmenu "+encodeArg(bnx), 'muted'));
+-      sayPanel(who, 'BizTracker — Stock', lines3);
+-      return;
+-    }
++        else for (var i=0;i<keys.length;i++){
++          var have = [];
++                  for (var i=0;i<keys.length;i++){
++                  var k = keys[i], s = bz4.stock[k];
++                  if ((s.qtyUnits||0) > 0) have.push([k,s]);
++          }
++          if (!have.length) lines3.push('<em>No stock on hand.</em>');
++          for (var h=0; h<have.length; h++){
++                  var s = have[h][1];
++                  var containers = s.unitsPerContainer>0 ? Math.floor((s.qtyUnits||0)/s.unitsPerContainer) : 0;
++                  var rem = s.unitsPerContainer>0 ? ((s.qtyUnits||0)%s.unitsPerContainer) : (s.qtyUnits||0);
++                  lines3.push(
++                          '• <b>'+_.escape(s.label)+'</b>: '+(s.qtyUnits||0)+' '+_.escape(s.baseUnit)+' ('+containers+' '+_.escape(s.containerUnit)+' + '+rem+')'
++                          + ' — sell@'+(s.salePricePerUnit||0).toFixed(2)+'gp'
++                  );
++          }
++        }
++
++        lines3.push('<hr>'+btn('Back', "!biz --bizmenu "+encodeArg(bnx), 'muted'));
++        sayPanel(who, 'BizTracker — Stock', lines3);
++        return;
++      }
+ 
+     case '--buystock': {
+       var bnB = decodeArg(parts[2]);
+       var prod = stripQuotes(parts[3]);
+       var units = parseInt(stripQuotes(parts[4])||'0',10) || 0;
+       var conts = parseInt(stripQuotes(parts[5])||'0',10) || 0;
+       var bizB = state.BIZ.businesses[bnB];
+       if (!bizB) return whisper(who, panel('Error', ['❌ No such business: '+_.escape(bnB)]));
+       var s = bizB.stock && bizB.stock[prod];
+       if (!s) return whisper(who, panel('Error', ['❌ No such product key: '+_.escape(prod)]));
+       var totalUnits = units + conts * (s.unitsPerContainer||0);
+       if (totalUnits<=0) return whisper(who, panel('Error', ['❌ Quantity must be > 0.']));
+       // market link?
+       var unitCost = s.purchaseCostPerUnit||0.1;
+       if (s.linkedToMarket && s.marketTag){
+         var best = marketBestPrice(s.marketTag);
+         if (best) unitCost = best.priceGP;
+       }
+       // franchise discount
+       var disc = franchiseDiscountFor(bnB);
+       unitCost *= (1 - disc);
+       var costGp = totalUnits * unitCost;
+       var costCP = Math.floor(costGp*1000);
+       var newTotal = currencyToCP(bizB.cash) - costCP;
+       bizB.cash = cpToCurrency(newTotal);
