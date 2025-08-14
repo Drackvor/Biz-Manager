@@ -1,8 +1,8 @@
 diff --git a/V1.6.0 b/V1.6.0
-index dd059948c3b79a3af31d68675b88a8d96ab955aa..64b33dcac119ea495ba9b8f7cfc708dab24d9b91 100644
+index dd059948c3b79a3af31d68675b88a8d96ab955aa..c6a8edfa48d838eef5df12fbf34778440cb17d25 100644
 --- a/V1.6.0
 +++ b/V1.6.0
-@@ -1,190 +1,260 @@
+@@ -1,190 +1,251 @@
  // BizTracker.js v1.6.0 — Roll20 API (ES5-safe)
  // • Keeps v1.5.0 structure & UI, adds: Seasons, Restaurant & Café menus/recipes,
  //   Central Market (brands, age, quality, specials), Suppliers, Lots+Spoilage/Aging,
@@ -11,43 +11,36 @@ index dd059948c3b79a3af31d68675b88a8d96ab955aa..64b33dcac119ea495ba9b8f7cfc708da
  // • ES5-safe (no let/const/arrow), compact panels & buttons maintained.
  
 +/* ======================
-+   UNIVERSAL LOGGER
++   UNIFIED LOGGER
 +   ====================== */
 +
-+// master switches
-+var BIZ_LOG_ENABLED = true;     // turn all logging on/off
-+var BIZ_LOG_TO_CHAT = false;    // optionally whisper a short note to GM for each log
++var LOG_LEVELS = { debug:0, info:1, warn:2, error:3 };
++state.BIZ = state.BIZ || {};
++state.BIZ.log = state.BIZ.log || { enable:true, minLevel:'debug', history:[] };
 +
-+var BIZ_LOG_PREFIX  = '\uD83D\uDCBC [BizTracker]';
-+
-+function bizLog(message, data, whisperTo){
-+  if (!BIZ_LOG_ENABLED) return;
-+
-+  var stamp = new Date().toISOString();
-+  var header = BIZ_LOG_PREFIX + ' ' + stamp + ' — ' + message;
-+
-+  try {
-+    if (typeof data === 'undefined') {
-+      console.log(header);
-+    } else {
-+      console.log(header, data);
-+    }
-+  } catch (err) {
-+    // Roll20 console is robust, but keep this safe
-+    try { console.log(header + ' [data unavailable]', err); } catch(_) {}
-+  }
-+
-+  if (BIZ_LOG_TO_CHAT) {
-+    var who = whisperTo || 'gm';
-+    try {
-+      sendChat('BizTracker', '/w '+who+' ' + panel('Log', [_.escape(message) + (data ? ' <em>(details in console)</em>' : '')]));
-+    } catch(_) {}
-+  }
++function _now(){ return new Date().toISOString(); }
++function _lvl(n){ return LOG_LEVELS[n] || 0; }
++function log(level, ctx, msg, data){
++  try{
++    if (!state.BIZ.log || !state.BIZ.log.enable) return;
++    if (_lvl(level) < _lvl(state.BIZ.log.minLevel)) return;
++    var rec = { t:_now(), level:level, ctx:ctx, msg:String(msg||''), data:(data||null) };
++    state.BIZ.log.history.push(rec);
++    if (state.BIZ.log.history.length>500) state.BIZ.log.history.shift();
++    var prefix = '['+level.toUpperCase()+']['+ctx+'] ';
++    if (level==='error') logError(prefix+msg, data);
++    else if (level==='warn') logWarn(prefix+msg, data);
++    else logInfo(prefix+msg, data);
++  }catch(e){ /* never throw */ }
 +}
++function logInfo(m,d){ if (typeof sendChat==='function'){ sendChat('BizTracker', '/w gm '+_.escape(m)); } if (d) try{console.log(m,d);}catch(_){ } }
++function logWarn(m,d){ if (typeof sendChat==='function'){ sendChat('BizTracker', '/w gm \u26A0\uFE0F '+_.escape(m)); } if (d) try{console.warn(m,d);}catch(_){ } }
++function logError(m,d){ if (typeof sendChat==='function'){ sendChat('BizTracker', '/w gm \u274C '+_.escape(m)); } if (d) try{console.error(m,d);}catch(_){ } }
 +
-+// quick helpers (optional)
-+function bizWarn(message, data, who){ bizLog('\u26A0\uFE0F ' + message, data, who); }
-+function bizErr(message, data, who){  bizLog('\u274C ' + message, data, who); }
++// legacy wrappers
++function bizLog(message, data, ctx){ log('info', ctx||'LEGACY', message, data); }
++function bizWarn(message, data, ctx){ log('warn', ctx||'LEGACY', message, data); }
++function bizErr(message, data, ctx){ log('error', ctx||'LEGACY', message, data); }
 +
  on('ready', function() {
 +  bizLog('System ready, initializing state if needed');
@@ -102,27 +95,39 @@ index dd059948c3b79a3af31d68675b88a8d96ab955aa..64b33dcac119ea495ba9b8f7cfc708da
 +  bizLog('Decoding arg', { input: s });
    try { return decodeURIComponent(stripQuotes(s||'')); }
 -  catch(e){ return stripQuotes(s||''); }
-+  catch(e){ bizWarn('Failed to decode arg', { input: s, error: e }); return stripQuotes(s||''); }
- }
- function currencyToCP(c){
-+  bizLog('Converting currency to CP', c);
-   return (c.pd||0)*100000 + (c.pp||0)*10000 + (c.gp||0)*1000 + (c.ep||0)*500 + (c.sp||0)*10 + (c.cp||0);
- }
- function cpToCurrency(total){
-+  bizLog('Converting CP to currency', { total: total });
-   var cp = total|0;
-   var pd = Math.floor(cp/100000); cp%=100000;
-   var pp = Math.floor(cp/10000);  cp%=10000;
-   var gp = Math.floor(cp/1000);   cp%=1000;
-   var ep = Math.floor(cp/500);    cp%=500;
-   var sp = Math.floor(cp/10);     cp%=10;
+-}
+-function currencyToCP(c){
+-  return (c.pd||0)*100000 + (c.pp||0)*10000 + (c.gp||0)*1000 + (c.ep||0)*500 + (c.sp||0)*10 + (c.cp||0);
+-}
+-function cpToCurrency(total){
+-  var cp = total|0;
+-  var pd = Math.floor(cp/100000); cp%=100000;
+-  var pp = Math.floor(cp/10000);  cp%=10000;
+-  var gp = Math.floor(cp/1000);   cp%=1000;
+-  var ep = Math.floor(cp/500);    cp%=500;
+-  var sp = Math.floor(cp/10);     cp%=10;
 -  return { pd:pd, pp:pp, gp:gp, ep:ep, sp:sp, cp:cp };
-+  var out = { pd:pd, pp:pp, gp:gp, ep:ep, sp:sp, cp:cp };
+-}
+-function currStr(c){ return c.pd+'pd '+c.pp+'pp '+c.gp+'gp '+c.ep+'ep '+c.sp+'sp '+c.cp+'cp'; }
+-function gpStr(cp){ return (cp/1000).toFixed(2)+'gp'; }
++  catch(e){ bizWarn('Failed to decode arg', { input: s, error: e }); return stripQuotes(s||''); }
++}
++function gpToCP(gp){ return Math.round((gp||0) * 100); }
++function cpToGP(cp){ return Math.round((cp||0)) / 100; }
++function gpStr(cp){ return (cpToGP(cp)).toFixed(2)+'gp'; }
++function currencyToCP(c){ return gpToCP((c.pp||0)*10 + (c.gp||0) + (c.ep||0)*0.5 + (c.sp||0)*0.1 + (c.cp||0)*0.01); }
++function cpToCurrency(cp){
++  bizLog('Converting CP to currency', { total: cp });
++  var t = Math.round(cp||0);
++  var pp = Math.floor(t/1000); t%=1000;
++  var gp = Math.floor(t/100);  t%=100;
++  var ep = Math.floor(t/50);   t%=50;
++  var sp = Math.floor(t/10);   t%=10;
++  var out = { pp:pp, gp:gp, ep:ep, sp:sp, cp:t };
 +  bizLog('Converted CP to currency', out);
 +  return out;
- }
- function currStr(c){ return c.pd+'pd '+c.pp+'pp '+c.gp+'gp '+c.ep+'ep '+c.sp+'sp '+c.cp+'cp'; }
- function gpStr(cp){ return (cp/1000).toFixed(2)+'gp'; }
++}
++function currStr(c){ return (c.pp||0)+'pp '+(c.gp||0)+'gp '+(c.ep||0)+'ep '+(c.sp||0)+'sp '+(c.cp||0)+'cp'; }
  function clamp(n,a,b){ return Math.max(a, Math.min(b, n)); }
  function rnd(min,max){ return Math.random()*(max-min)+min; }
  
@@ -276,7 +281,390 @@ index dd059948c3b79a3af31d68675b88a8d96ab955aa..64b33dcac119ea495ba9b8f7cfc708da
  
  function startBuyFlowFromTag(who, rawTag){
    var tag = stripQuotes(rawTag);
-@@ -1981,55 +2051,79 @@ function showMarket(who){
+diff --git a/V1.6.0 b/V1.6.0
+index dd059948c3b79a3af31d68675b88a8d96ab955aa..c6a8edfa48d838eef5df12fbf34778440cb17d25 100644
+--- a/V1.6.0
++++ b/V1.6.0
+@@ -1459,53 +1520,70 @@ function marketOffersByTag(tag){
+   return out;
+ }
+ function marketBestOffer(tag){
+   var arr = marketOffersByTag(tag);
+   return arr.length ? arr[0] : null;
+ }
+ 
+ /* =========================
+    SUPPLIERS + FRANCHISE DISCOUNT
+    ========================= */
+ function franchiseDiscountFor(bizName){
+   var name, fr, i;
+   for (name in state.BIZ.franchises){
+     fr = state.BIZ.franchises[name]||[];
+     for (i=0;i<fr.length;i++){
+       if (fr[i]===bizName){
+         var members = fr.length;
+         var tiers = Math.floor(members/3); // 3 members per 5% tier
+         return clamp(tiers*0.05, 0, 0.15); // cap 15%
+       }
+     }
+   }
+   return 0;
+ }
+ function ensureSuppliers(biz){
+-  biz.suppliers = biz.suppliers || {
+-    'Common Consortium': { reliability:0.92, leadDays:2, discount:0 }
+-  };
++  biz.suppliers = biz.suppliers || { 'Common Consortium': { reliability:0.92, baseLeadDays:2, discount:0, trust:50, variance:0.15, history:[] } };
++}
++function supplierEffectiveLead(sup){
++  var base = sup.baseLeadDays||sup.leadDays||2;
++  var jitter = (1 - (sup.trust||50)/100) * (sup.variance||0.15) * base;
++  var delta = (Math.random()*2-1) * jitter;
++  return Math.max(0, Math.round(base + delta));
++}
++function priceWithSupplier(sup, rawUnitPriceGP){
++  var penalty = Math.max(0, 60 - (sup.trust||50)) / 1000;
++  return rawUnitPriceGP * (1 - (sup.discount||0)) * (1 + penalty);
++}
++function updateSupplierTrust(sup, outcome){
++  var d = outcome==='on_time'? +2 : outcome==='late'? -1 : outcome==='partial'? -3 : -5;
++  sup.trust = clamp((sup.trust||50) + d, 0, 100);
++  sup.reliability = clamp( (sup.reliability||0.9)*0.9 + (outcome==='failed'?0:1)*0.1, 0, 0.999);
++  sup.history = sup.history || [];
++  sup.history.push({ t:_now(), outcome:outcome });
++  if (sup.history.length>100) sup.history.shift();
++  log('info','SUPPLIER','trust_update',{name:sup.name||'?', outcome:outcome, trust:sup.trust, reliability:sup.reliability});
+ }
+ 
+ /* =========================
+    MENUS (recipes consume stock)
+    ========================= */
+ function seedMenuForBiz(biz){
+   biz.menu = biz.menu || {};
+   biz.menuSections = biz.menuSections || { drinks:{}, food:{}, services:{} };
+ 
+   function addFood(key, label, priceGp, share, tags, recipe){
+     biz.menu[key] = { label:label, priceGp:priceGp, share:share||0.2, tags:tags||[], recipe: recipe||[], pricingMode:'fixed', targetMargin:0.5, analytics:[] };
+     biz.menuSections.food[key] = biz.menu[key];
+   }
+   function addDrink(key, label, priceGp, share, tags, recipe){
+     biz.menu[key] = { label:label, priceGp:priceGp, share:share||0.2, tags:tags||[], recipe: recipe||[], pricingMode:'fixed', targetMargin:0.5, analytics:[] };
+     biz.menuSections.drinks[key] = biz.menu[key];
+   }
+   function addService(key, label, priceGp, share, tags){
+     biz.menu[key] = { label:label, priceGp:priceGp, share:share||0.2, tags:tags||[], recipe:[], pricingMode:'fixed', targetMargin:0.5, analytics:[] };
+     biz.menuSections.services[key] = biz.menu[key];
+   }
+ 
+   // Food venues
+   if (biz.type==='Tavern' || biz.type==='Restaurant' || biz.type==='Café' || biz.type==='Inn'){
+     addDrink('mead_pint','Pint of Mead', 0.06, 0.20, ['coldale'], [{key:'mead',units:1}]);
+diff --git a/V1.6.0 b/V1.6.0
+index dd059948c3b79a3af31d68675b88a8d96ab955aa..c6a8edfa48d838eef5df12fbf34778440cb17d25 100644
+--- a/V1.6.0
++++ b/V1.6.0
+@@ -1529,51 +1607,51 @@ function seedMenuForBiz(biz){
+     addService('breast_adamant','Forge: Adamantine Breastplate', 800.00, 0.05, ['adamantine']);
+     addService('blade_orich','Forge: Orichalcum Bastard Sword', 1200.00, 0.05, ['orichalcum']);
+   }
+   if (biz.type==='Courier Service'){
+     addService('small_parcel','Small Parcel (wrapping)', 0.16, 0.6, [], []);
+     addService('sealed_parcel','Sealed Parcel', 0.18, 0.4, [], []);
+   }
+ }
+ 
+ /* ============ STOCK INIT + LOTS ============ */
+ // Auto-initial restock: 1x standing order (or 1 container if no standing order)
+ // Costs are deducted; cash may go negative (debt). Logged to ledger.
+ function autoInitialRestock(bizName){
+   var biz = state.BIZ.businesses[bizName];
+   if (!biz || !biz.stock) return;
+   var today = state.BIZ.date;
+   Object.keys(biz.stock).forEach(function(k){
+     var it = biz.stock[k];
+     var units = it.baseStandingOrderUnits || it.standingOrderUnits || (it.unitsPerContainer||0) || 0;
+     if (units<=0) return;
+     var unitCost = it.purchaseCostPerUnit || 0.05, best;
+     if (it.linkedToMarket && it.marketTag){
+       best = marketBestOffer(it.marketTag);
+       if (best) unitCost = best.priceGP;
+     }
+-    var costCP = Math.floor(units * unitCost * 1000);
++    var costCP = Math.round(units * unitCost * 100);
+     biz.cash = cpToCurrency( currencyToCP(biz.cash) - costCP ); // allow debt
+     addLot(it, units, today, best?best.id:null);
+     appendLedger(bizName, '<p>• Initial stock: '+units+' '+_.escape(it.baseUnit)+' of '+_.escape(it.label)+' — −'+gpStr(costCP)+'</p>');
+   });
+ }
+ 
+ function initStandingOrdersForBiz(biz){
+   var tcfg = TYPE_INCOME[biz.type] || TYPE_INCOME['default'];
+   var items = (tcfg.stock||[]);
+   if (!biz.stock) biz.stock = {};
+   for (var j=0;j<items.length;j++){
+     var s = items[j];
+     var cycle = perishDays(s.perishability);
+     biz.stock[s.key] = {
+       label:s.label, baseUnit:s.baseUnit, containerUnit:s.containerUnit, unitsPerContainer:s.unitsPerContainer,
+       perishability:s.perishability, purchaseCostPerUnit:s.purchaseCostPerUnit, salePricePerUnit:s.salePricePerUnit||0,
+       baseStandingOrderUnits: s.baseStandingOrderUnits||0, standingOrderUnits: s.baseStandingOrderUnits||0,
+       marketTag: s.marketTag||null, linkedToMarket: !!s.linkedToMarket,
+       qtyUnits: 0, lots: [], nextRestock: cycle ? addDaysHarptos(state.BIZ.date, cycle) : null,
+       pricingMode:'fixed', targetMargin:0.5, tags:(s.tags||[]),
+       ageBonusPct: (/whiskey|wine/.test(s.marketTag||'') ? 0.01 : 0) // +1%/month when aging
+     };
+   }
+ }
+ function addLot(it, qty, today, skuId){
+diff --git a/V1.6.0 b/V1.6.0
+index dd059948c3b79a3af31d68675b88a8d96ab955aa..c6a8edfa48d838eef5df12fbf34778440cb17d25 100644
+--- a/V1.6.0
++++ b/V1.6.0
+@@ -1677,50 +1755,74 @@ function pickDailyEvent(today){
+   }
+   return { tier:tier, desc: chosen.text, mult: mult*festMult, repDelta: (chosen.rep||0)+festRep, stockHit: chosen.stockHit||0 };
+ }
+ 
+ /* =========================
+    HANDOUT LEDGER
+    ========================= */
+ function ensureLedgerHandout(bizName) {
+   var wanted = 'Ledger — ' + bizName;
+   var ho = findObjs({ _type:'handout', name: wanted })[0];
+   if (!ho) {
+     ho = createObj('handout', { name: wanted, inplayerjournals: 'all', archived: false });
+     var head = '<h1>'+_.escape(wanted)+'</h1><p><em>Automatic ledger. All values in gp unless noted.</em></p><hr>';
+     ho.set('notes', head);
+   }
+   return ho;
+ }
+ function appendLedger(bizName, html) {
+   var ho = ensureLedgerHandout(bizName);
+   ho.get('notes', function(n){ ho.set('notes', (n||'') + html); });
+ }
+ function logOpenBusiness(name, type, sizeLabel, date, rooms){
+   ensureLedgerHandout(name);
+   appendLedger(name, '<h2>'+_.escape(dateStr(date))+'</h2><p><strong>Business:</strong> '+_.escape(name)+' ('+_.escape(type)+' — '+_.escape(sizeLabel)+')'+(rooms?' — Rooms: '+rooms:'')+'</p><hr>');
+ }
++function quickAddBusiness(name, type, rooms){
++  log('info','QUICK','quickAddBusiness',{name:name,type:type,rooms:rooms});
++  state.BIZ.businesses[name] = {
++    type:type, size:'tiny', reputation:0, trust:(type==='Courier Service'?50:undefined),
++    policy:{ insurance:false },
++    cash:{pp:0,gp:0,ep:0,sp:0,cp:0},
++    expenses:[], staff:[], stock:{},
++    rooms: (TYPE_INCOME[type] && TYPE_INCOME[type].rooms) ? [] : undefined,
++    ledger:[]
++  };
++  initStandingOrdersForBiz(state.BIZ.businesses[name]);
++  ensureSuppliers(state.BIZ.businesses[name]);
++  ensureMenusForBusiness(state.BIZ.businesses[name]);
++  if (rooms>0 && state.BIZ.businesses[name].rooms){
++    for (var r=1;r<=rooms;r++) state.BIZ.businesses[name].rooms.push({ name:'Room #'+r, rateGp:0.50, upkeepGp:0.10, occupiedUntil:null });
++  }
++  autoInitialRestock(name);
++  logOpenBusiness(name, type, (SIZE['tiny'].label), state.BIZ.date, rooms||0);
++}
++function handleMarketBuyTagQuote(who, bn, key, tag, cont, units){
++  log('info','BUY','handleMarketBuyTagQuote',{bn:bn,key:key,tag:tag,cont:cont,units:units});
++  // TODO: implement full market quote and confirmation flow
++  return whisper(who, panel('Buy Drinks',['Not implemented.']));
++}
+ function logDailyOutcome(name, today, paidList, baseCP, evt, incomeCP, netCP, closingCashStr, capacityNote, stockSpoilLines, consumptionNote){
+   var lines = [];
+   lines.push('<h3>'+_.escape(dateStr(today))+'</h3>');
+   if (today.festival) lines.push('<p><strong>Festival:</strong> '+_.escape(today.festival)+'</p>');
+   if (paidList.length){
+     lines.push('<p><strong>Expenses & Purchases Today</strong></p><ul>');
+     for (var i=0;i<paidList.length;i++){
+       var p = paidList[i];
+       lines.push('<li>'+_.escape(p.what)+' ('+_.escape(p.freq)+') — −'+gpStr(p.cp)+'</li>');
+     }
+     lines.push('</ul>');
+   } else {
+     lines.push('<p><em>No expenses paid today.</em></p>');
+   }
+   if (stockSpoilLines && stockSpoilLines.length){
+     lines.push('<p><strong>Spoilage/Breakage</strong></p><ul>');
+     for (var s=0;s<stockSpoilLines.length;s++) lines.push('<li>'+_.escape(stockSpoilLines[s])+'</li>');
+     lines.push('</ul>');
+   }
+   lines.push(
+     '<p><strong>Base Income:</strong> +'+gpStr(baseCP)+'<br>'+
+     '<strong>Event:</strong> '+_.escape(evt.tier)+' (×'+evt.mult.toFixed(2)+') — '+_.escape(evt.desc)+'<br>'+
+     '<strong>Income Applied:</strong> +'+gpStr(incomeCP)+(capacityNote?'<br><em>'+_.escape(capacityNote)+'</em>':'')+(consumptionNote?'<br><em>'+_.escape(consumptionNote)+'</em>':'')+'</p>'
+   );
+   var sign = netCP>=0?'+':'−';
+diff --git a/V1.6.0 b/V1.6.0
+index dd059948c3b79a3af31d68675b88a8d96ab955aa..c6a8edfa48d838eef5df12fbf34778440cb17d25 100644
+--- a/V1.6.0
++++ b/V1.6.0
+@@ -1750,90 +1852,93 @@ function menuLines(biz){
+   else for (i=0;i<K.length;i++){ it=S[K[i]]; out.push('• <b>'+_.escape(it.label)+'</b> — '+it.priceGp.toFixed(2)+'gp'); }
+   return out;
+ }
+ 
+ 
+ /* ==============
+    MENUS: consume
+    ============== */
+ function consumeIngredients(biz, recipe, units, paidToday){
+   var i, r, needed, it, used, short, rushCP=0, buyCost, uval;
+   recipe = recipe||[];
+   for (i=0;i<recipe.length;i++){
+     r = recipe[i];
+     needed = r.units * units;
+     it = biz.stock[r.key];
+     if (!it){ return { ok:false, rushCP:0, note:'Missing stock key '+r.key }; }
+     // have enough?
+     used = takeFromLots(it, needed);
+     if (used<needed){
+       short = needed - used;
+       // try rush buy via market if linked, else at purchaseCostPerUnit
+       uval = it.purchaseCostPerUnit || 0.05;
+       if (it.linkedToMarket && it.marketTag){
+         var best = marketBestPrice(it.marketTag);
+         if (best && best.priceGP>0){
+-          buyCost = Math.floor(short * best.priceGP * 1000 * 1.10); // 10% rush premium
++          buyCost = Math.round(short * best.priceGP * 100 * 1.10); // 10% rush premium
+           rushCP += buyCost;
+           addLot(it, short, state.BIZ.date, best.id);
+           // immediately consume
+           takeFromLots(it, short);
+         } else return { ok:false, rushCP:rushCP, note:'Market out: '+it.label };
+       } else {
+-        buyCost = Math.floor(short * uval * 1000 * 1.10);
++        buyCost = Math.round(short * uval * 100 * 1.10);
+         rushCP += buyCost;
+         addLot(it, short, state.BIZ.date, null);
+         takeFromLots(it, short);
+       }
+       if (rushCP>0) paidToday.push({ what:'Emergency '+it.label, freq:'One-off', cp:rushCP });
+     }
+   }
+   return { ok:true, rushCP:rushCP, note:'' };
+ }
+ 
+ /* ==============
+    UI — MENUS & MARKET
+    ============== */
+ function showMainMenu(who) {
+   var d = state.BIZ.date;
+   var biz = _.keys(state.BIZ.businesses);
+   var fr  = _.keys(state.BIZ.franchises);
+   var evts= state.BIZ.calendarEvents || [];
+ // Build the list of types dynamically from TYPE_INCOME (skip 'default')
+   var typeList = _.keys(TYPE_INCOME).filter(function(k){ return k!=='default'; }).join('|');
+ 
+ 
+   var lines = [];
+   lines.push('📅 <b>'+_.escape(dateStr(d))+'</b> — Tenday '+d.weekday+'/10');
+ 
+   lines.push(
+     btn('Set Date', "!biz --setdate '?{Month|"+months.join('|')+"}' '?{Day (1-30 or 0 for festival)|1}' '?{Year|1358}' '?{Festival (leave blank or pick)|"+festivals.map(function(f){return f.name;}).join('|')+"}'", 'info')
+   );
+ 
+   lines.push(
+     btn('Add Business', "!biz --addbusiness '?{Name}' '?{Type|"+typeList+"}' '?{Rooms (Inn only)|0}'", 'pri')
+   );
++  lines.push(
++    btn('Add Business (Quick)', "!biz --quickadd '?{Name}' '?{Type|"+typeList+"}' '?{Rooms (Inn only)|0}'", 'pri')
++  );
+ 
+   if (biz.length){
+     lines.push(btn('Remove Business', "!biz --removebusiness '?{Name|"+biz.join('|')+"}'", 'danger'));
+     lines.push('<hr><b>Businesses</b>');
+     for (var i=0;i<biz.length;i++){
+       lines.push(btn(biz[i], "!biz --bizmenu "+encodeArg(biz[i]), 'sec'));
+     }
+   } else {
+     lines.push('<em>no businesses</em>');
+   }
+ 
+   lines.push('<hr>');
+   lines.push(btn('Add Franchise', "!biz --addfranchise '?{Name}'", 'pri'));
+   if (fr.length){
+     lines.push(btn('Remove Franchise', "!biz --removefranchise '?{Name|"+fr.join('|')+"}'", 'danger'));
+     lines.push('<hr><b>Franchises</b>');
+     for (var j=0;j<fr.length;j++){
+       lines.push(btn(fr[j], "!biz --franchmenu "+encodeArg(fr[j]), 'sec'));
+     }
+   } else {
+     lines.push('<em>no franchises</em>');
+   }
+ 
+   lines.push('<hr>');
+   lines.push(
+diff --git a/V1.6.0 b/V1.6.0
+index dd059948c3b79a3af31d68675b88a8d96ab955aa..c6a8edfa48d838eef5df12fbf34778440cb17d25 100644
+--- a/V1.6.0
++++ b/V1.6.0
+@@ -1865,58 +1970,60 @@ function showBusinessMenu(who, raw) {
+   ensureSuppliers(biz);
+   var header = '💼 <b>'+_.escape(name)+'</b> — '+_.escape(biz.type)+' — '+(SIZE[biz.size]||SIZE.small).label;
+   var status = 'Cash: '+currStr(biz.cash)+' — Rep: '+(biz.reputation||0).toFixed(1)+(biz.type==='Courier Service'?' — Trust: '+((biz.trust||50)|0):'');
+ 
+   var lines = [header, status, '<hr><b>Operations</b>'];
+   lines.push(
+     btn('Add Income', "!biz --addincome "+enc+" '?{Source}' '?{Amount GP}'", 'pri')+' '+
+     btn('Add Expense', "!biz --addexpense "+enc+" '?{What}' '?{Frequency|Daily|Weekly|Monthly|Yearly}' '?{Amount GP}'", 'sec')+' '+
+     btn('View Ledger', "!biz --viewledger "+enc, 'info')+' '+
+     btn('Weekly Report', "!biz --report "+enc, 'info')
+   );
+ 
+   lines.push('<hr><b>Staff</b>');
+   lines.push(
+     btn('Add Staff', "!biz --addstaff "+enc+" '?{Name}' '?{Role}' '?{Weekly Wage (gp)|1}'", 'pri')+' '+
+     btn('Train Staff', "!biz --trainstaff "+enc+" '?{Name}' '?{Skill Δ (e.g. 0.1)|0.1}'", 'sec')+' '+
+     btn('Remove Staff', "!biz --removestaff "+enc+" '?{Name}'", 'danger')+' '+
+     btn('View Staff', "!biz --viewstaff "+enc, 'sec')
+   );
+ 
+   lines.push('<hr><b>Stock</b>');
+   var prodKeys = Object.keys(biz.stock||{});
+   lines.push(
+     btn('View Stock', "!biz --viewstock "+enc, 'sec')+' '+
+     (prodKeys.length ? btn('Buy Stock', "!biz --buystock "+enc+" '?{Product|"+prodKeys.join('|')+"}' '?{Units (base units)|0}' '?{Containers|0}'", 'pri') : '<em>no products yet</em>')+' '+
++    btn('Buy Drinks', "!biz --buydrinks "+enc+" '?{Tag|mead|ale|wine|whiskey|rum|cider}' '?{Containers|1}' '?{Extra units|0}'", 'pri')+' '+
+     btn('Add Product', "!biz --addproduct "+enc+" '?{Key (no spaces)}' '?{Label}' '?{Base Unit|unit}' '?{Container Unit|crate}' '?{Units per Container|10}' '?{Perishability|weekly|monthly|yearly|indefinite}' '?{Purchase Cost per Base Unit (gp)|0.1}' '?{Sale Price per Base Unit (gp)|0.2}' '?{Standing Order Units per Cycle|50}' '?{Initial Units|50}'", 'pri')
+   );
+ 
+   if (biz.type==='Tavern' || biz.type==='Inn' || biz.type==='Restaurant' || biz.type==='Café' || biz.type==='Courier Service'){
+     lines.push('<hr><b>Menu</b>');
+     lines.push(
+       btn('View Menu', "!biz --viewmenu "+enc, 'sec')+' '+
+       btn('Add Menu Item', "!biz --addmenu "+enc+" '?{Key}' '?{Label}' '?{Price gp}' '?{Share (0..1)|0.2}' '?{Recipe CSV stockKey:units|oats:0.2,milk:0.15}'", 'pri')+' '+
++      btn('Add Food Item (guided)', "!biz --addfood "+enc+" '?{Name}' '?{Price gp|0.5}' '?{Ingredient 1 (stockKey:units)|flour:0.2}' '?{Ingredient 2|}' '?{Ingredient 3|}' '?{Ingredient 4|}' '?{Ingredient 5|}' '?{Ingredient 6|}'", 'pri')+' '+
+       btn('Set Pricing', "!biz --setpricing "+enc+" '?{menu or stock|menu|stock}' '?{Key}' '?{Mode|fixed|target|smart}' '?{Target Margin (0..1, if target)|0.5}'", 'info')
+     );
+   }
+ 
+   var t = TYPE_INCOME[biz.type];
+   if (t && t.rooms){
+     var roomNames = (biz.rooms||[]).map(function(r){return r.name;}).join('|') || 'Room #1';
+     lines.push('<hr><b>Rooms</b>');
+     lines.push(
+       btn('Set Rooms', "!biz --setrooms "+enc+" '?{Rooms|10}' '?{Rate gp/day|0.5}' '?{Upkeep gp/day|0.1}'", 'pri')+' '+
+       btn('Book Room', "!biz --bookroom "+enc+" '?{Room|"+roomNames+"}' '?{Nights|1}'", 'sec')+' '+
+       btn('View Rooms', "!biz --viewrooms "+enc, 'info')
+     );
+   }
+ 
+   lines.push('<hr><b>Suppliers & Market</b>');
+   lines.push(
+     btn('View Market', "!biz --market", 'sec')+' '+
+     btn('Buy SKU → Stock', "!biz --buysku "+enc+" '?{Stock Key|"+(prodKeys.join('|')||'stockKey')+"}' '?{SKU Id}' '?{Units|1}'", 'pri')+' '+
+     btn('Set Supplier', "!biz --setsupplier "+enc+" '?{Stock Key|"+(prodKeys.join('|')||'stockKey')+"}' '?{Name|Common Consortium}' '?{Reliability (0..1)|0.92}' '?{Lead Days|2}' '?{Discount (0..1)|0}'", 'info')
+   );
+ 
+   if (biz.type==='Courier Service'){
+     lines.push('<hr><b>Courier Policy</b>');
+     lines.push(
+diff --git a/V1.6.0 b/V1.6.0
+index dd059948c3b79a3af31d68675b88a8d96ab955aa..c6a8edfa48d838eef5df12fbf34778440cb17d25 100644
+--- a/V1.6.0
++++ b/V1.6.0
+@@ -1981,55 +2088,79 @@ function showMarket(who){
      lines.push('• <b>'+_.escape(tag)+'</b> — best '+best.priceGP.toFixed(3)+'gp/'+_.escape(best.unit)+' '+(best.offerPct?('(offer '+best.offerPct+'%)'):'')+
        ' '+btn('Buy', "!biz --marketbuytag " +
          '"?{Business|'+pickBiz+'}" '+
@@ -356,7 +744,131 @@ index dd059948c3b79a3af31d68675b88a8d96ab955aa..64b33dcac119ea495ba9b8f7cfc708da
      case '--setdate': {
        var mon = stripQuotes(parts[2]);
        var day = parseInt(stripQuotes(parts[3])||'1',10);
-@@ -2208,71 +2302,72 @@ case '--buyexec':
+diff --git a/V1.6.0 b/V1.6.0
+index dd059948c3b79a3af31d68675b88a8d96ab955aa..c6a8edfa48d838eef5df12fbf34778440cb17d25 100644
+--- a/V1.6.0
++++ b/V1.6.0
+@@ -2088,97 +2219,108 @@ case '--buyexec':
+ 
+       var earr = TYPE_AUTO_EXPENSES[type] || TYPE_AUTO_EXPENSES['default'];
+       for (var j=0;j<earr.length;j++){
+         var e = earr[j];
+         state.BIZ.businesses[name].expenses.push({
+           what:e.what, frequency:e.frequency, amount:{ gp: +(e.baseGp*0.9).toFixed(2) }, nextDue: cloneDate(state.BIZ.date)
+         });
+       }
+       if (TYPE_INCOME[type] && TYPE_INCOME[type].rooms) {
+         if (rooms>0){
+           for (var r=1;r<=rooms;r++){
+             state.BIZ.businesses[name].rooms.push({ name:'Room #'+r, rateGp:0.50, upkeepGp:0.10, occupiedUntil:null });
+           }
+         } else {
+           whisper(who, panel('Inn Rooms',
+             ['ℹ️ Inn "'+_.escape(name)+'" created without rooms.',
+              btn('Create Rooms Now', "!biz --setrooms "+encodeArg(name)+" '?{Rooms|10}' '?{Rate gp/day|0.5}' '?{Upkeep gp/day|0.1}'", 'pri')
+             ]));
+         }
+       }
+       logOpenBusiness(name, type, (SIZE['tiny'].label), state.BIZ.date, rooms>0?rooms:null);
+       whisper(who, panel('Business Added', ['✅ "'+_.escape(name)+'" ('+_.escape(type)+') created.']));
+       return showMainMenu(who);
+     }
+ 
++    case '--quickadd': {
++      var nm = stripQuotes(parts[2]);
++      var tp = stripQuotes(parts[3]||'');
++      var rm = parseInt(stripQuotes(parts[4]||'0'),10)||0;
++      if (!nm || !tp) return whisper(who, panel('Quick Add',["Usage: "+btn('Add Business (Quick)', "!biz --quickadd '?{Name}' '?{Type|Tavern|Inn|Restaurant|Café|Blacksmith|Apothecary|General Store|Alchemist\\'s Lab|Courier Service|Jeweller|Magic Shop|Scriptorium|Stables|Temple|Theatre}' '?{Rooms (Inn only)|0}'", 'pri')]));
++      if (state.BIZ.businesses[nm]) return whisper(who, panel('Error',['❌ Business exists.']));
++      quickAddBusiness(nm,tp,rm);
++      log('info','CMD','--quickadd done',{nm:nm,tp:tp,rm:rm});
++      return showBusinessMenu(who, nm);
++    }
++
+     case '--removebusiness': {
+       var name2 = stripQuotes(parts[2]);
+       if (!state.BIZ.businesses[name2]) return whisper(who, panel('Error', ['❌ No such business: '+_.escape(name2)]));
+       delete state.BIZ.businesses[name2];
+       whisper(who, panel('Removed', ['❌ Removed business "'+_.escape(name2)+'".']));
+       return showMainMenu(who);
+     }
+ 
+     case '--bizmenu':
+       return showBusinessMenu(who, decodeArg(parts[2]));
+ 
+     /* EXPENSE / INCOME */
+     case '--addexpense': {
+       var bn   = decodeArg(parts[2]);
+       var what = stripQuotes(parts[3]);
+       var freq = stripQuotes(parts[4]);
+       var amt  = parseFloat(stripQuotes(parts[5])||'0')||0;
+       var biz  = state.BIZ.businesses[bn];
+       if (!biz) return whisper(who, panel('Error', ['❌ No such business: '+_.escape(bn)]));
+       biz.expenses.push({ what:what, frequency:freq, amount:{gp:amt}, nextDue: cloneDate(state.BIZ.date) });
+       appendLedger(bn, '<p>• Added expense: <strong>'+_.escape(what)+'</strong> — '+amt.toFixed(2)+'gp ('+_.escape(freq)+')</p>');
+       return showBusinessMenu(who, bn);
+     }
+ 
+     case '--addincome': {
+       var bn2 = decodeArg(parts[2]);
+       var src = stripQuotes(parts[3]);
+       var amt = parseFloat(stripQuotes(parts[4])||'0')||0;
+       var biz2= state.BIZ.businesses[bn2];
+       if (!biz2) return whisper(who, panel('Error', ['❌ No such business: '+_.escape(bn2)]));
+-      var cp  = Math.floor(amt*1000);
++      var cp  = Math.round(amt*100);
+       var total = currencyToCP(biz2.cash) + cp;
+       biz2.cash = cpToCurrency(total);
+       biz2.ledger.push({ date: cloneDate(state.BIZ.date), source: src, delta: cp });
+       appendLedger(bn2, '<p>• '+_.escape(dateStr(state.BIZ.date))+': Income — <strong>'+_.escape(src)+'</strong> +'+gpStr(cp)+'</p>');
+       return showBusinessMenu(who, bn2);
+     }
+ 
+     case '--viewledger': {
+       var bn3  = decodeArg(parts[2]);
+       var biz3 = state.BIZ.businesses[bn3];
+       if (!biz3) return whisper(who, panel('Error', ['❌ No such business: '+_.escape(bn3)]));
+       var rows = ['📔 Ledger for <b>'+_.escape(bn3)+'</b> — see journal: <em>Ledger — '+_.escape(bn3)+'</em>'];
+       for (var i=0;i<(biz3.ledger||[]).length;i++){
+         var entry = biz3.ledger[i];
+         var ds  = dateStr(entry.date);
+-        var delta = (entry.delta/1000).toFixed(2)+'gp';
++        var delta = (entry.delta/100).toFixed(2)+'gp';
+         var label = entry.tier || entry.source || 'entry';
+         var note  = entry.desc ? ' — '+entry.desc : '';
+         rows.push(_.escape(ds)+' — '+_.escape(label)+': '+(entry.delta>0?'+':'')+_.escape(delta)+_.escape(note));
+       }
+       rows.push('<hr>'+btn('Back', "!biz --bizmenu "+encodeArg(bn3), 'muted'));
+       sayPanel(who, 'BizTracker — Ledger', rows);
+       return;
+     }
+ 
+     /* STAFF */
+     case '--addstaff': {
+       var bns = decodeArg(parts[2]);
+       var nm  = stripQuotes(parts[3]);
+       var role= stripQuotes(parts[4]);
+       var wage= parseFloat(stripQuotes(parts[5])||'1')||1;
+       var bz  = state.BIZ.businesses[bns];
+       if (!bz) return whisper(who, panel('Error', ['❌ No such business: '+_.escape(bns)]));
+       bz.staff.push({ name:nm, role:role, wageGp:wage, skill:1.0 });
+       bz.expenses.push({ what:'Wages: '+nm+' ('+role+')', frequency:'Weekly', amount:{gp:wage}, nextDue: cloneDate(state.BIZ.date) });
+       recomputeSize(bz);
+       appendLedger(bns, '<p>• Staff hired: <strong>'+_.escape(nm)+'</strong> — '+_.escape(role)+' ('+wage.toFixed(2)+'gp/week)</p>');
+       return showBusinessMenu(who, bns);
+     }
+ 
+     case '--trainstaff': {
+diff --git a/V1.6.0 b/V1.6.0
+index dd059948c3b79a3af31d68675b88a8d96ab955aa..c6a8edfa48d838eef5df12fbf34778440cb17d25 100644
+--- a/V1.6.0
++++ b/V1.6.0
+@@ -2203,232 +2345,282 @@ case '--buyexec':
+       bz2.staff = (bz2.staff||[]).filter(function(s){ return s.name!==nm2; });
+       bz2.expenses = (bz2.expenses||[]).filter(function(e){ return !( (e.what||'').indexOf('Wages: '+nm2+' ')===0 ); });
+       recomputeSize(bz2);
+       appendLedger(bnr, '<p>• Staff departed: <strong>'+_.escape(nm2)+'</strong></p>');
+       return showBusinessMenu(who, bnr);
      }
  
      case '--viewstaff': {
@@ -377,11 +889,11 @@ index dd059948c3b79a3af31d68675b88a8d96ab955aa..64b33dcac119ea495ba9b8f7cfc708da
      /* STOCK VIEW/BUY/ADD */
      case '--viewstock': {
        var bnx = decodeArg(parts[2]);
-       var bz4 = state.BIZ.businesses[bnx];
-       if (!bz4) return whisper(who, panel('Error', ['❌ No such business: '+_.escape(bnx)]));
-       var lines3 = ['📦 <b>Stock for '+_.escape(bnx)+'</b>'];
-       var keys = Object.keys(bz4.stock||{});
-       if (!keys.length) lines3.push('<em>No tracked stock for this business.</em>');
+-      var bz4 = state.BIZ.businesses[bnx];
+-      if (!bz4) return whisper(who, panel('Error', ['❌ No such business: '+_.escape(bnx)]));
+-      var lines3 = ['📦 <b>Stock for '+_.escape(bnx)+'</b>'];
+-      var keys = Object.keys(bz4.stock||{});
+-      if (!keys.length) lines3.push('<em>No tracked stock for this business.</em>');
 -      else for (var i=0;i<keys.length;i++){
 -        var have = [];
 -		for (var i=0;i<keys.length;i++){
@@ -401,31 +913,50 @@ index dd059948c3b79a3af31d68675b88a8d96ab955aa..64b33dcac119ea495ba9b8f7cfc708da
 -
 -      lines3.push('<hr>'+btn('Back', "!biz --bizmenu "+encodeArg(bnx), 'muted'));
 -      sayPanel(who, 'BizTracker — Stock', lines3);
--      return;
--    }
-+        else for (var i=0;i<keys.length;i++){
-+          var have = [];
-+                  for (var i=0;i<keys.length;i++){
-+                  var k = keys[i], s = bz4.stock[k];
-+                  if ((s.qtyUnits||0) > 0) have.push([k,s]);
-+          }
-+          if (!have.length) lines3.push('<em>No stock on hand.</em>');
-+          for (var h=0; h<have.length; h++){
-+                  var s = have[h][1];
-+                  var containers = s.unitsPerContainer>0 ? Math.floor((s.qtyUnits||0)/s.unitsPerContainer) : 0;
-+                  var rem = s.unitsPerContainer>0 ? ((s.qtyUnits||0)%s.unitsPerContainer) : (s.qtyUnits||0);
-+                  lines3.push(
-+                          '• <b>'+_.escape(s.label)+'</b>: '+(s.qtyUnits||0)+' '+_.escape(s.baseUnit)+' ('+containers+' '+_.escape(s.containerUnit)+' + '+rem+')'
-+                          + ' — sell@'+(s.salePricePerUnit||0).toFixed(2)+'gp'
-+                  );
-+          }
++      var biz = state.BIZ.businesses[bnx];
++      if (!biz) return whisper(who, panel('Error', ['❌ No such business: '+_.escape(bnx)]));
++      var lines = ['📦 <b>Stock for '+_.escape(bnx)+'</b>'];
++      var keys = Object.keys(biz.stock||{});
++      if (!keys.length){
++        lines.push('<em>No tracked stock for this business.</em>');
++      } else {
++        var shown = 0;
++        for (var i=0;i<keys.length;i++){
++          var s = biz.stock[keys[i]];
++          var qty = s.qtyUnits||0;
++          var unit = _.escape(s.baseUnit||'unit');
++          var cu = s.unitsPerContainer||0;
++          var cont = cu>0 ? Math.floor(qty/cu) : 0;
++          var rem  = cu>0 ? (qty%cu) : qty;
++          lines.push('• <b>'+_.escape(s.label)+'</b>: '+qty+' '+unit+' ('+cont+' '+_.escape(s.containerUnit||'container')+' + '+rem+') — sell@'+(s.salePricePerUnit||0).toFixed(2)+'gp');
++          shown++;
 +        }
-+
-+        lines3.push('<hr>'+btn('Back', "!biz --bizmenu "+encodeArg(bnx), 'muted'));
-+        sayPanel(who, 'BizTracker — Stock', lines3);
-+        return;
++        if (!shown) lines.push('<em>No stock on hand.</em>');
 +      }
++      lines.push('<hr>'+btn('Back', "!biz --bizmenu "+encodeArg(bnx), 'muted'));
++      sayPanel(who, 'BizTracker — Stock', lines);
++      log('info','UI','viewstock',{bnx:bnx, count: keys.length});
+       return;
+     }
  
++    case '--buydrinks': {
++      var bn = decodeArg(parts[2]);
++      var tag = stripQuotes(parts[3]);
++      var cont = Math.max(0, parseInt(stripQuotes(parts[4])||'1',10));
++      var units= Math.max(0, parseInt(stripQuotes(parts[5])||'0',10));
++      var biz = state.BIZ.businesses[bn]; if (!biz) return whisper(who, panel('Error',['❌ No such business.']));
++      var key = null, it=null;
++      Object.keys(biz.stock||{}).some(function(k){
++        var s=biz.stock[k];
++        if (s.linkedToMarket && (s.marketTag===tag)){ key=k; it=s; return true; }
++        return false;
++      });
++      if (!key) return whisper(who, panel('Error',['❌ No stock item linked to '+_.escape(tag)+' in this business.']));
++      var total = cont*(it.unitsPerContainer||0)+units;
++      if (total<=0) return whisper(who, panel('Error',['❌ Quantity must be > 0.']));
++      log('info','BUY','--buydrinks quote',{bn:bn, tag:tag, key:key, total:total});
++      return handleMarketBuyTagQuote(who, bn, key, tag, cont, units);
++    }
      case '--buystock': {
        var bnB = decodeArg(parts[2]);
        var prod = stripQuotes(parts[3]);
@@ -447,6 +978,440 @@ index dd059948c3b79a3af31d68675b88a8d96ab955aa..64b33dcac119ea495ba9b8f7cfc708da
        var disc = franchiseDiscountFor(bnB);
        unitCost *= (1 - disc);
        var costGp = totalUnits * unitCost;
-       var costCP = Math.floor(costGp*1000);
+-      var costCP = Math.floor(costGp*1000);
++      var costCP = Math.round(costGp*100);
        var newTotal = currencyToCP(bizB.cash) - costCP;
        bizB.cash = cpToCurrency(newTotal);
+       addLot(s, totalUnits, state.BIZ.date, (s.linkedToMarket? (best?best.id:null):null));
+       appendLedger(bnB, '<p>• Purchased '+totalUnits+' '+_.escape(s.baseUnit)+' of '+_.escape(s.label)+' — −'+gpStr(costCP)+ (disc?(' (franchise −'+Math.round(disc*100)+'%)'):'') +'</p>');
+       return showBusinessMenu(who, bnB);
+     }
+ 
+     case '--addproduct': {
+       var bnP = decodeArg(parts[2]);
+       var key = stripQuotes(parts[3]);
+       var label= stripQuotes(parts[4]);
+       var baseU= stripQuotes(parts[5]);
+       var contU= stripQuotes(parts[6]);
+       var upc  = parseInt(stripQuotes(parts[7])||'1',10) || 1;
+       var per  = stripQuotes(parts[8]).toLowerCase();
+       var buy  = parseFloat(stripQuotes(parts[9])||'0.1')||0.1;
+       var sell = parseFloat(stripQuotes(parts[10])||'0.2')||0.2;
+       var stand= parseInt(stripQuotes(parts[11])||'50',10)||50;
+       var init = parseInt(stripQuotes(parts[12])||'50',10)||50;
+       var bizP = state.BIZ.businesses[bnP];
+       if (!bizP) return whisper(who, panel('Error', ['❌ No such business: '+_.escape(bnP)]));
+       if (!bizP.stock) bizP.stock = {};
+       bizP.stock[key] = {
+         label:label, baseUnit:baseU, containerUnit:contU, unitsPerContainer:upc,
+         perishability: per, purchaseCostPerUnit:buy, salePricePerUnit:sell,
+         baseStandingOrderUnits: stand, standingOrderUnits: stand,
+         marketTag:null, linkedToMarket:false,
+         qtyUnits: 0, lots: [], nextRestock: perishDays(per) ? addDaysHarptos(state.BIZ.date, perishDays(per)) : null,
+         pricingMode:'fixed', targetMargin:0.5, tags:[]
+       };
+       addLot(bizP.stock[key], init, state.BIZ.date, null);
+       appendLedger(bnP, '<p>• Product added: <strong>'+_.escape(label)+'</strong> ('+init+' '+_.escape(baseU)+') — standing '+stand+'/'+per+'</p>');
+       return showBusinessMenu(who, bnP);
+     }
+ 
+     case '--buysku': {
+       var bnS = decodeArg(parts[2]);
+       var stockKey = stripQuotes(parts[3]);
+       var skuId = stripQuotes(parts[4]);
+       var units = Math.max(1, parseInt(stripQuotes(parts[5])||'1',10));
+       var bizS = state.BIZ.businesses[bnS];
+       if (!bizS) return whisper(who, panel('Error', ['❌ No such business.']));
+       var it = bizS.stock[stockKey];
+       if (!it) return whisper(who, panel('Error', ['❌ No such stock key: '+_.escape(stockKey)]));
+       var price = marketPriceBySKU(skuId);
+       if (!price) return whisper(who, panel('Error', ['❌ Unknown or unavailable SKU.']));
+       var disc = franchiseDiscountFor(bnS);
+-      var costCP = Math.floor(units * price * (1-disc) * 1000);
++      var costCP = Math.round(units * price * (1-disc) * 100);
+       bizS.cash = cpToCurrency(currencyToCP(bizS.cash) - costCP);
+       addLot(it, units, state.BIZ.date, skuId);
+       appendLedger(bnS, '<p>• Market purchase: '+units+' '+_.escape(it.baseUnit)+' of '+_.escape(it.label)+' — −'+gpStr(costCP)+ (disc?(' (franchise −'+Math.round(disc*100)+'%)'):'') +'</p>');
+       return showBusinessMenu(who, bnS);
+     }
+ 	    /* BUY BY TAG — no SKU needed: quote -> confirm */
+     case '--marketbuytag': {
+       var bnT   = decodeArg(parts[2]);            // business name
+       var sKey  = stripQuotes(parts[3]);          // stock key in that business
+       var tag   = stripQuotes(parts[4]);          // market tag
+       var nCont = Math.max(0, parseInt(stripQuotes(parts[5])||'0',10));
+       var nUnit = Math.max(0, parseInt(stripQuotes(parts[6])||'0',10));
+       var biz   = state.BIZ.businesses[bnT];
+       if (!biz) return whisper(who, panel('Error',['❌ No such business.']));
+       var it    = biz.stock[sKey];
+       if (!it)  return whisper(who, panel('Error',['❌ No such stock key: '+_.escape(sKey)]));
+       if (!it.linkedToMarket || !it.marketTag){
+         return whisper(who, panel('Error',['❌ This stock item is not linked to the market. Set a marketTag on it.']));
+       }
+       // compute total base units from containers + extra units
+       var totalUnits = (nCont*(it.unitsPerContainer||0)) + nUnit;
+       if (totalUnits<=0) return whisper(who, panel('Error',['❌ Quantity must be > 0.']));
+ 
+       var offer = marketBestOffer(tag);
+       if (!offer) return whisper(who, panel('Market',['❌ No available offers for '+_.escape(tag)+' right now.']));
+       // discounts
+       var unitCost = offer.priceGP;
+       var sup = (it.preferredSupplier && biz.suppliers && biz.suppliers[it.preferredSupplier]) ? biz.suppliers[it.preferredSupplier] : null;
+       var supDisc = sup ? (sup.discount||0) : 0;
+       var frDisc  = franchiseDiscountFor(bnT);
+       unitCost *= (1 - supDisc) * (1 - frDisc);
+ 
+-      var costCP = Math.floor(totalUnits * unitCost * 1000);
++      var costCP = Math.round(totalUnits * unitCost * 100);
+       var willDebt = currencyToCP(biz.cash) < costCP;
+ 
+       var confirmCmd = "!biz --marketconfirm "+encodeArg(bnT)+" "+encodeArg(sKey)+" "+encodeArg(tag)+" "+totalUnits+" "+offer.id+" "+offer.priceGP;
+       var cancelCmd  = "!biz --bizmenu "+encodeArg(bnT);
+ 
+       var lines = [
+         '🧾 <b>Purchase Quote</b>',
+         'Item: '+_.escape(it.label)+' ('+_.escape(tag)+')',
+         'Qty: '+totalUnits+' '+_.escape(it.baseUnit)+' ('+nCont+' '+_.escape(it.containerUnit||'container')+' + '+nUnit+')',
+         'Unit price (after discounts): '+(unitCost).toFixed(3)+'gp',
+         'Total: <b>'+gpStr(costCP)+'</b>'+(willDebt?' — ⚠️ will result in debt':''),
+         btn('Confirm (Yes)', confirmCmd, 'pri')+' '+btn('Cancel (No)', cancelCmd, 'muted')
+       ];
+       sayPanel(who,'Confirm Purchase', lines);
+       return;
+     }
+ 
+     case '--marketconfirm': {
+       var bnC   = decodeArg(parts[2]);
+       var sKeyC = decodeArg(parts[3]);
+       var tagC  = decodeArg(parts[4]);
+       var totalUnits = Math.max(1, parseInt(decodeArg(parts[5])||'1',10));
+       var skuId = decodeArg(parts[6]); // best offer id (for trace)
+       var rawUnit = parseFloat(decodeArg(parts[7])||'0')||0; // pre-discount; we’ll re-eval for ledger clarity
+ 
+       var bizC = state.BIZ.businesses[bnC];
+       if (!bizC) return;
+       var itC  = bizC.stock[sKeyC]; if (!itC) return;
+ 
+       var offer2 = marketBestOffer(tagC);
+       if (!offer2) return whisper(who, panel('Error',['❌ Offer no longer available. Try again.']));
+       var unitCost = offer2.priceGP;
+       var sup = (itC.preferredSupplier && bizC.suppliers && bizC.suppliers[itC.preferredSupplier]) ? bizC.suppliers[itC.preferredSupplier] : null;
+       var supDisc = sup ? (sup.discount||0) : 0;
+       var frDisc  = franchiseDiscountFor(bnC);
+       unitCost *= (1 - supDisc) * (1 - frDisc);
+ 
+-      var costCP = Math.floor(totalUnits * unitCost * 1000);
++      var costCP = Math.round(totalUnits * unitCost * 100);
+       bizC.cash = cpToCurrency( currencyToCP(bizC.cash) - costCP );
+       addLot(itC, totalUnits, state.BIZ.date, offer2.id);
+       appendLedger(bnC, '<p>• Market purchase: '+totalUnits+' '+_.escape(itC.baseUnit)+' of '+_.escape(itC.label)+' @ '+unitCost.toFixed(3)+'gp — −'+gpStr(costCP)+'</p>');
+       return showBusinessMenu(who, bnC);
+     }
+ 
+     /* MENU EDIT */
+     case '--viewmenu': {
+       var bnm = decodeArg(parts[2]);
+       var bizm= state.BIZ.businesses[bnm];
+       if (!bizm) return whisper(who, panel('Error', ['❌ No such business.']));
+       sayPanel(who, 'Menu — '+bnm, menuLines(bizm).concat(['<hr>'+btn('Back', "!biz --bizmenu "+encodeArg(bnm), 'muted')]));
+       return;
+     }
++    case '--addfood': {
++      var bn = decodeArg(parts[2]);
++      var biz = state.BIZ.businesses[bn]; if (!biz) return whisper(who, panel('Error',['❌ No such business.']));
++      var name = stripQuotes(parts[3]);
++      var price= parseFloat(stripQuotes(parts[4])||'0.5')||0.5;
++      var ing = [];
++      for (var i=5;i<11;i++){
++        var seg = stripQuotes(parts[i]||'').trim();
++        if (!seg) continue;
++        var p = seg.split(':');
++        ing.push({ key:p[0].trim(), units: parseFloat((p[1]||'1'))||1 });
++        if (ing.length>=6) break;
++      }
++      ing.forEach(function(r){
++        if (!biz.stock[r.key]){
++          biz.stock[r.key] = {
++            label:r.key, baseUnit:'unit', containerUnit:'crate', unitsPerContainer:10,
++            perishability:'monthly', purchaseCostPerUnit:0.05, salePricePerUnit:0,
++            baseStandingOrderUnits:10, standingOrderUnits:10, marketTag:null, linkedToMarket:false,
++            qtyUnits:0, lots:[], nextRestock: addDaysHarptos(state.BIZ.date, 30),
++            pricingMode:'fixed', targetMargin:0.5, tags:[]
++          };
++          log('info','MENU','auto-created stock for ingredient',{bn:bn, key:r.key});
++        }
++      });
++      biz.menu = biz.menu||{}; biz.menuSections=biz.menuSections||{drinks:{},food:{},services:{}};
++      var key = name.toLowerCase().replace(/\s+/g,'_').replace(/[^a-z0-9_]/g,'');
++      biz.menu[key] = { label:name, priceGp:price, share:0.2, tags:['food'], recipe:ing, pricingMode:'smart', targetMargin:0.6, analytics:[] };
++      biz.menuSections.food[key] = biz.menu[key];
++      appendLedger(bn, '<p>• Menu item added: <strong>'+_.escape(name)+'</strong> @ '+price.toFixed(2)+'gp</p>');
++      log('info','MENU','addfood',{bn:bn, key:key, price:price, ing:ing});
++      return showBusinessMenu(who, bn);
++    }
+     case '--addmenu': {
+       var bnA = decodeArg(parts[2]);
+       var key = stripQuotes(parts[3]);
+       var label= stripQuotes(parts[4]);
+       var price= parseFloat(stripQuotes(parts[5])||'0.2')||0.2;
+       var share= parseFloat(stripQuotes(parts[6])||'0.2')||0.2;
+       var csv  = stripQuotes(parts[7]||'');
+       var bizA = state.BIZ.businesses[bnA];
+       if (!bizA) return whisper(who, panel('Error', ['❌ No such business.']));
+       bizA.menu = bizA.menu || {};
+       var rec = csv.split(',').map(function(seg){ seg=seg.trim(); if (!seg) return null; var p=seg.split(':'); return { key:p[0].trim(), units: parseFloat((p[1]||'1'))||1 }; }).filter(function(x){return !!x;});
+       bizA.menu[key] = { label:label, priceGp:price, share:share, recipe:rec, tags:[], pricingMode:'fixed', targetMargin:0.5, analytics:[] };
+       appendLedger(bnA, '<p>• Menu item added: <strong>'+_.escape(label)+'</strong> @ '+price.toFixed(2)+'gp</p>');
+       return showBusinessMenu(who, bnA);
+     }
+     case '--setpricing': {
+       var bnP2 = decodeArg(parts[2]);
+       var scope= stripQuotes(parts[3]); // 'menu' or 'stock'
+       var key  = stripQuotes(parts[4]);
+       var mode = stripQuotes(parts[5]); // fixed|target|smart
+       var targ = parseFloat(stripQuotes(parts[6])||'0.5')||0.5;
+       var bizSP= state.BIZ.businesses[bnP2];
+       if (!bizSP) return whisper(who, panel('Error',['❌ No such business.']));
+       if (scope==='menu' && bizSP.menu && bizSP.menu[key]){
+         bizSP.menu[key].pricingMode=mode; bizSP.menu[key].targetMargin=targ;
+diff --git a/V1.6.0 b/V1.6.0
+index dd059948c3b79a3af31d68675b88a8d96ab955aa..c6a8edfa48d838eef5df12fbf34778440cb17d25 100644
+--- a/V1.6.0
++++ b/V1.6.0
+@@ -2595,226 +2787,226 @@ case '--buyexec':
+       whisper(who, panel('Export',['📤 Wrote current state to handout: <b>BizTracker Export</b>']));
+       return;
+     }
+ 
+     /* ADVANCE / REWIND */
+     case '--advday': {
+       var prevDate = cloneDate(state.BIZ.date);
+       advanceHarptos();
+       var today = state.BIZ.date;
+       var evt = pickDailyEvent(today);
+       var impacts = {};
+ 
+       _.each(state.BIZ.businesses, function(biz, name){
+         recomputeSize(biz);
+         ensureSuppliers(biz);
+         var sizeCfg = SIZE[biz.size] || SIZE.small;
+         var typeCfg = TYPE_INCOME[biz.type] || TYPE_INCOME['default'];
+ 
+         // 1) Expenses due today
+         var paidToday = [];
+         var expenseCP = 0;
+         (biz.expenses||[]).forEach(function(e){
+           var due = e.nextDue;
+           var match = (due && due.year===today.year && due.month===today.month && due.day===today.day && ((due.festival||null)===(today.festival||null)));
+           if (match){
+-            var cp = Math.floor((e.amount.gp||0)*1000);
++            var cp = Math.round((e.amount.gp||0)*100);
+             expenseCP += cp;
+             paidToday.push({ what:e.what, freq:e.frequency, cp:cp });
+             var step = e.frequency==='Daily' ? 1 : e.frequency==='Weekly' ? 10 : e.frequency==='Monthly' ? 30 : 365;
+             e.nextDue = addDaysHarptos(due, step);
+           }
+         });
+ 
+         // 2) Base income (variance + size + reputation + staff skill + courier trust)
+         var varPct  = (typeCfg && typeof typeCfg.var==='number') ? typeCfg.var : 0.30;
+         var variance= 1 + (Math.random()*2 - 1) * varPct;
+         var rep     = clamp((biz.reputation||0), -50, 100);
+         var repMult = 1 + (rep/100)*0.5;
+         var baseGP  = Math.max(0, (typeCfg?typeCfg.gp:1.0) * variance * (sizeCfg.baseMult||1) * repMult * (avgSkill(biz)||1));
+         if (biz.type==='Courier Service'){
+           var trust = (typeof biz.trust==='number') ? biz.trust : 50;
+           baseGP *= Math.max(0.15, 0.2 + trust/100);
+         }
+-        var baseCP  = Math.floor(baseGP * 1000);
++        var baseCP  = Math.round(baseGP * 100);
+ 
+         // 3) Capacity gate (skill already blended in base); hard cap still applies
+         var staffCount = (biz.staff||[]).length;
+         var demand = Math.ceil(baseGP * 4);
+         var capacity = (staffCount*2) + (sizeCfg.demandCap||16);
+         var capacityNote = '';
+         var incomeCPBeforeEvent = baseCP;
+         if (demand > capacity){
+           var capRatio = capacity / Math.max(1, demand);
+           incomeCPBeforeEvent = Math.floor(incomeCPBeforeEvent * capRatio);
+           capacityNote = 'Capacity limit: demand '+demand+', capacity '+capacity+' (scaled).';
+           biz.reputation = (biz.reputation||0) - 0.2;
+         }
+ 
+         // 4) Event spoilage (lots)
+         var spoilLines = [];
+         if (evt.stockHit && biz.stock){
+           Object.keys(biz.stock).forEach(function(k){
+             var it = biz.stock[k];
+             if (!it || !it.perishability || it.perishability==='indefinite') return;
+             var lost = spoilLots(it, evt.stockHit);
+             if (lost>0) spoilLines.push(it.label+': −'+lost+' '+it.baseUnit);
+           });
+         }
+ 
+         // 5) SELL: allocate income between priced stock & menu items
+         var priced = []; // objects {kind:'stock'|'menu', key, priceGp, share, tags, recipe?}
+         if (biz.stock){
+           Object.keys(biz.stock).forEach(function(k){
+             var it = biz.stock[k];
+             if (it && it.salePricePerUnit>0){ priced.push({ kind:'stock', key:k, priceGp:it.salePricePerUnit, share:0.2, tags:it.tags||[] }); }
+           });
+         }
+         if (biz.menu){
+           Object.keys(biz.menu).forEach(function(k){
+             var m = biz.menu[k];
+             priced.push({ kind:'menu', key:k, priceGp:m.priceGp, share: m.share||0.2, tags:m.tags||[], recipe:m.recipe||[] });
+           });
+         }
+         if (!priced.length && biz.stock && Object.keys(biz.stock).length){
+           // fallback to heuristic
+           var keys = Object.keys(biz.stock);
+-          var perKeyGP = (incomeCPBeforeEvent/1000) / keys.length;
++          var perKeyGP = (incomeCPBeforeEvent/100) / keys.length;
+           keys.forEach(function(k){
+             var it = biz.stock[k];
+             var unitValue = Math.max((it.purchaseCostPerUnit||0)*1.5, 0.05);
+             var unitsDemanded = Math.ceil(perKeyGP / unitValue);
+             var used = takeFromLots(it, unitsDemanded);
+             var shortfall = Math.max(0, unitsDemanded - used);
+             if (shortfall>0){
+-              var buyCost = Math.floor(shortfall * (it.purchaseCostPerUnit||unitValue*0.5) * 1.25 * 1000);
++              var buyCost = Math.round(shortfall * (it.purchaseCostPerUnit||unitValue*0.5) * 1.25 * 100);
+               expenseCP += buyCost;
+               paidToday.push({ what:'Emergency '+it.label, freq:'One-off', cp:buyCost });
+               addLot(it, shortfall, today, null); takeFromLots(it, shortfall);
+             }
+           });
+         } else {
+           // normalize shares & apply seasons
+           var totalShare=0, i;
+           for (i=0;i<priced.length;i++){
+             priced[i]._season = seasonalMult(today, priced[i].tags||[]);
+             totalShare += (priced[i].share||0.2) * (priced[i]._season||1);
+           }
+-          var per = (incomeCPBeforeEvent/1000);
++          var per = (incomeCPBeforeEvent/100);
+           for (i=0;i<priced.length;i++){
+             var weight = (priced[i].share||0.2) * (priced[i]._season||1) / Math.max(0.0001,totalShare);
+             var gpAlloc = per * weight;
+             var unitsDemanded = Math.max(0, Math.ceil(gpAlloc / Math.max(0.01, priced[i].priceGp)));
+             if (unitsDemanded<=0) continue;
+ 
+             if (priced[i].kind==='stock'){
+               var itS = biz.stock[priced[i].key];
+               var usedS = takeFromLots(itS, unitsDemanded);
+               var shortS = Math.max(0, unitsDemanded - usedS);
+               if (shortS>0){
+                 var unitVal = itS.purchaseCostPerUnit||0.05, best;
+                 if (itS.linkedToMarket && itS.marketTag){
+                   best = marketBestPrice(itS.marketTag);
+                   if (best) unitVal = best.priceGP;
+                 }
+-                var rush = Math.floor(shortS * unitVal * 1.25 * 1000);
++                var rush = Math.round(shortS * unitVal * 1.25 * 100);
+                 expenseCP += rush; paidToday.push({ what:'Emergency '+itS.label, freq:'One-off', cp:rush });
+                 addLot(itS, shortS, today, (best?best.id:null)); takeFromLots(itS, shortS);
+               }
+               // dynamic pricing record
+               itS.analytics = itS.analytics||[];
+               itS.analytics.push({ d:cloneDate(today), demanded:unitsDemanded, sold:unitsDemanded, price:itS.salePricePerUnit });
+               if (itS.analytics.length>20) itS.analytics.shift();
+ 
+             } else if (priced[i].kind==='menu'){
+               var mI = biz.menu[priced[i].key];
+               var res = consumeIngredients(biz, mI.recipe||[], unitsDemanded, paidToday);
+               if (!res.ok){ biz.reputation = (biz.reputation||0)-0.5; }
+               mI.analytics = mI.analytics||[];
+               mI.analytics.push({ d:cloneDate(today), demanded:unitsDemanded, sold:unitsDemanded, price:mI.priceGp });
+               if (mI.analytics.length>20) mI.analytics.shift();
+             }
+           }
+         }
+ 
+         // 6) Event multiplier
+         var incomeCP = Math.floor(incomeCPBeforeEvent * evt.mult);
+ 
+         // 7) Rooms (inn)
+         var roomsRevenueCP = 0, roomsUpkeepCP = 0;
+         var tcfgRooms = TYPE_INCOME[biz.type] && TYPE_INCOME[biz.type].rooms;
+         if (tcfgRooms){
+           (biz.rooms||[]).forEach(function(r){
+-            roomsUpkeepCP += Math.floor((r.upkeepGp||0)*1000);
++            roomsUpkeepCP += Math.round((r.upkeepGp||0)*100);
+             if (r.occupiedUntil && dateLE(today, r.occupiedUntil)){
+-              roomsRevenueCP += Math.floor((r.rateGp||0)*1000);
++              roomsRevenueCP += Math.round((r.rateGp||0)*100);
+             }
+           });
+         }
+ 
+         // 8) STANDING ORDERS (suppliers, market, franchise discount, reliability)
+         if (biz.stock){
+           Object.keys(biz.stock).forEach(function(k){
+             var it = biz.stock[k];
+             var cycle = perishDays(it.perishability);
+             if (!cycle || !it.nextRestock) return;
+             if (it.nextRestock.year===today.year && it.nextRestock.month===today.month && it.nextRestock.day===today.day && ((it.nextRestock.festival||null)===(today.festival||null))){
+               var scale = standingScale(biz);
+               var orderUnits = Math.max(0, Math.round((it.standingOrderUnits||0) * scale));
+               if (orderUnits>0){
+                 var unitCost = it.purchaseCostPerUnit||0.05, supplier = it.preferredSupplier && biz.suppliers[it.preferredSupplier] ? biz.suppliers[it.preferredSupplier] : null;
+                 var reliable = supplier ? (Math.random()<supplier.reliability) : true;
+                 if (it.linkedToMarket && it.marketTag){
+                   var best = marketBestPrice(it.marketTag);
+                   if (best) unitCost = best.priceGP;
+                 }
+                 // discounts
+                 var supDisc = supplier ? supplier.discount||0 : 0;
+                 var frDisc  = franchiseDiscountFor(name);
+                 unitCost *= (1 - supDisc) * (1 - frDisc);
+                 if (reliable){
+-                  var orderCost = Math.floor(orderUnits * unitCost * 1000);
++                  var orderCost = Math.round(orderUnits * unitCost * 100);
+                   var tot = currencyToCP(biz.cash) - orderCost;
+                   biz.cash = cpToCurrency(tot);
+                   addLot(it, orderUnits, today, null);
+                   paidToday.push({ what:'Standing Order: '+it.label, freq:it.perishability, cp:orderCost });
+                 } else {
+                   paidToday.push({ what:'Standing Order Failed: '+it.label, freq:'Delay', cp:0 });
+                 }
+               }
+               // next
+               var lead = supplier ? supplier.leadDays||0 : 0;
+               it.nextRestock = addDaysHarptos(today, cycle + lead);
+             }
+           });
+         }
+ 
+         // 9) Courier incidents (liability)
+         if (biz.type==='Courier Service'){
+           var risk = 0.04 * (1-(avgSkill(biz)-1)*0.5); // skill reduces
+           if (Math.random()<risk){
+-            var claimCP = Math.floor( rnd(0.5,1.5) * 1000 );
++            var claimCP = Math.round( rnd(0.5,1.5) * 100 );
+             expenseCP += claimCP;
+             paidToday.push({ what:'Lost Parcel Claims', freq:'One-off', cp:claimCP });
+             biz.trust = clamp((biz.trust||50)-5, 0, 100);
+             biz.reputation = (biz.reputation||0) - 1;
+           }
+           // insurance upsell adds 8% revenue
+           if (biz.policy && biz.policy.insurance) incomeCP = Math.floor(incomeCP * 1.08);
+         }
+ 
+         // 10) Aging (monthly tick): add a tiny bonus to implied price
+         if (today.day===1 && biz.stock){
+           Object.keys(biz.stock).forEach(function(k){
+             var it = biz.stock[k]; if (!it || !it.lots || !it.lots.length) return;
+             for (var L=0;L<it.lots.length;L++){ it.lots[L].ageMonths = (it.lots[L].ageMonths||0)+1; }
+             if (it.ageBonusPct){ it.salePricePerUnit = +( (it.salePricePerUnit||0) * (1+it.ageBonusPct) ).toFixed(3); }
+           });
+         }
+ 
+         // 11) Dynamic pricing (simple sell-through nudges)
+         function tunePrice(mode, target, price, series){
+           if (mode==='fixed' || !series || !series.length) return price;
+           var last = series.slice(-5);
+           var dem=0, sold=0, i;
+           for (i=0;i<last.length;i++){ dem+=last[i].demanded||0; sold+=last[i].sold||0; }
+           var rate = dem? (sold/dem) : 1.0;
